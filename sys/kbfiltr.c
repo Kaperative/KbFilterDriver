@@ -768,62 +768,39 @@ KbFilter_ServiceCallback(
     IN PKEYBOARD_INPUT_DATA InputDataStart,
     IN PKEYBOARD_INPUT_DATA InputDataEnd,
     IN OUT PULONG InputDataConsumed
-    )
-/*++
-
-Routine Description:
-
-    Called when there are keyboard packets to report to the Win32 subsystem.
-    You can do anything you like to the packets.  For instance:
-
-    o Drop a packet altogether
-    o Mutate the contents of a packet
-    o Insert packets into the stream
-
-Arguments:
-
-    DeviceObject - Context passed during the connect IOCTL
-
-    InputDataStart - First packet to be reported
-
-    InputDataEnd - One past the last packet to be reported.  Total number of
-                   packets is equal to InputDataEnd - InputDataStart
-
-    InputDataConsumed - Set to the total number of packets consumed by the RIT
-                        (via the function pointer we replaced in the connect
-                        IOCTL)
-
-Return Value:
-
-    Status is returned.
-
---*/
+)
 {
     PDEVICE_EXTENSION   devExt;
-    WDFDEVICE   hDevice;
+    WDFDEVICE           hDevice;
+    PKEYBOARD_INPUT_DATA curr;
+    ULONG               consumed = 0;
+    PSERVICE_CALLBACK_ROUTINE classService;
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
-
     devExt = FilterGetData(hDevice);
 
-    PKEYBOARD_INPUT_DATA curr = InputDataStart;
-    for (; curr < InputDataEnd; curr++)
-    {
-        if (curr->MakeCode == 0x1E)   // Скан-код 'A'
-        {
-          
+    classService    = *(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR)devExt->UpperConnectData.ClassService;
+
+    for (curr = InputDataStart; curr < InputDataEnd; curr++) {
+
+        // Игнорируем клавишу 'A'
+        if (curr->MakeCode == 0x1E) {
+            consumed++;
             continue;
         }
-            (*(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR)devExt->UpperConnectData.ClassService)(
+
+        // Вызываем оригинальный callback
+        classService(
             devExt->UpperConnectData.ClassDeviceObject,
             curr,
             curr + 1,
-            InputDataConsumed
-            );
-
-
+            &consumed
+        );
     }
+
+    *InputDataConsumed = consumed;
 }
+
 
 VOID
 KbFilterRequestCompletionRoutine(

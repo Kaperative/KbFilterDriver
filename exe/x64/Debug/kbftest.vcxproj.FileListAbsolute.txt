@@ -1,1 +1,2 @@
 C:\Users\user\Desktop\Новая папка\exe\x64\Debug\kbftest.exe
+C:\Users\user\Desktop\Новая папка\KbFilterDriver\exe\x64\Debug\kbftest.exe

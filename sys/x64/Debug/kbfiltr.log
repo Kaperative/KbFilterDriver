@@ -1,2 +1,27 @@
 ﻿  Building 'kbfiltr' with toolset 'WindowsKernelModeDriver10.0' and the 'Windows Driver' target platform.
-C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(507,5): error MSB8040: для этого проекта требуются библиотеки с устранением рисков Spectre. Установите их с помощью установщика Visual Studio (вкладка "Отдельные компоненты") для всех используемых архитектур и наборов инструментов. Дополнительные сведения см. на странице https://aka.ms/Ofhn4c
+  Stamping x64\Debug\kbfiltr.inf
+  Stamping [Version] section with DriverVer=11/28/2025,17.57.25.631
+  kbfiltr.c
+  kbfiltr.vcxproj -> C:\Users\user\Desktop\Новая папка\KbFilterDriver\sys\x64\Debug\kbfiltr.sys
+  Done Adding Additional Store
+  Successfully signed: C:\Users\user\Desktop\ \KbFilterDriver\sys\x64\Debug\kbfiltr.sys
+  
+  Driver is 'Windows Driver'.
+  .........................
+  Signability test complete.
+  
+  Errors:
+  None
+  
+  Warnings:
+  None
+  
+  Catalog generation complete.
+  C:\Users\user\Desktop\Новая папка\KbFilterDriver\sys\x64\Debug\kbfiltr\kmdfsamples.cat
+  Set catalog attribute.
+  WdkVersion: 10.0.26100.0
+  Set catalog attribute.
+  WdkAssemblyVersion: 10.0.26100.6584
+  Done Adding Additional Store
+  Successfully signed: x64\Debug\kbfiltr\kmdfsamples.cat
+  
