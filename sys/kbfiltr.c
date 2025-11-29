@@ -774,6 +774,7 @@ KbFilter_ServiceCallback(
     WDFDEVICE           hDevice;
     PKEYBOARD_INPUT_DATA curr;
     ULONG               consumed = 0;
+    ULONG               packetsConsumed = 0;
     PSERVICE_CALLBACK_ROUTINE classService;
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
@@ -782,20 +783,25 @@ KbFilter_ServiceCallback(
     classService    = *(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR)devExt->UpperConnectData.ClassService;
 
     for (curr = InputDataStart; curr < InputDataEnd; curr++) {
-
-        // Игнорируем клавишу 'A'
-        if (curr->MakeCode == 0x1E) {
+        // 1. Блокировка клавиши TAB (0x0F)
+        if (curr->MakeCode == 0x0F) {
             consumed++;
-            continue;
+            continue; // Пропускаем отправку
         }
 
-        // Вызываем оригинальный callback
+
+        // 2. Подмена: Нажатие 'Z' (0x2C) превращается в 'X' (0x2D)
+        if (curr->MakeCode == 0x2C) {
+            curr->MakeCode = 0x2D;
+        }
+
         classService(
             devExt->UpperConnectData.ClassDeviceObject,
             curr,
             curr + 1,
-            &consumed
+            &packetsConsumed
         );
+        consumed += packetsConsumed;
     }
 
     *InputDataConsumed = consumed;
