@@ -1,6 +1,9 @@
 
 #include "kbfiltr.h"
 #include "public.h"
+#include <wdf.h>
+#include <wdfobject.h>
+
 
 VOID
 KbFilter_EvtIoDeviceControlForRawPdo(
@@ -9,15 +12,25 @@ KbFilter_EvtIoDeviceControlForRawPdo(
     IN size_t        OutputBufferLength,
     IN size_t        InputBufferLength,
     IN ULONG         IoControlCode
-    )
+)
 
 {
     NTSTATUS status = STATUS_SUCCESS;
-    WDFDEVICE parent = WdfIoQueueGetDevice(Queue);
-    PRPDO_DEVICE_DATA pdoData;
+    // WDFDEVICE parent - это Raw PDO, которое получило запрос.
+    WDFDEVICE hChild = WdfIoQueueGetDevice(Queue);
+    PRPDO_DEVICE_DATA pdoData = PdoGetData(hChild);
+    // Получаем FDO (родительский фильтр), который хранит DEVICE_EXTENSION.
+    WDFDEVICE hFDO = WdfIoQueueGetDevice(pdoData->ParentQueue);
+
+    // Получаем контексты устройств
+
+    PDEVICE_EXTENSION devExt = FilterGetData(hFDO); // <-- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Инициализация devExt
+
     WDF_REQUEST_FORWARD_OPTIONS forwardOptions;
-        
-    pdoData = PdoGetData(parent);
+    size_t bytesTransferred = 0;
+
+    // Дублирование объявления 'status' удалено.
+    // Исходный 'parent' переименован в 'hChild' для ясности.
 
     UNREFERENCED_PARAMETER(OutputBufferLength);
     UNREFERENCED_PARAMETER(InputBufferLength);
@@ -26,21 +39,76 @@ KbFilter_EvtIoDeviceControlForRawPdo(
 
 
     switch (IoControlCode) {
+    case IOCTL_KBFILTR_SET_BLOCKED_KEYS:
+    {
+        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 2: Inside Case **\n"));
+        PBLOCKED_KEYS_CONFIG newConfig = NULL;
+
+
+        // 1. ПРОВЕРКА РАЗМЕРА
+        DebugPrint(("KBFILTR IOCTL: InputBufferLength: %zu, Expected size: %zu\n", InputBufferLength, sizeof(BLOCKED_KEYS_CONFIG)));
+        if (InputBufferLength < sizeof(BLOCKED_KEYS_CONFIG)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            DebugPrint(("KBFILTR IOCTL: ERROR: Buffer too small! Status 0x%x\n", status));
+            break;
+        }
+
+        // 2. ПОЛУЧЕНИЕ БУФЕРА
+        status = WdfRequestRetrieveInputBuffer(Request, sizeof(BLOCKED_KEYS_CONFIG), (PVOID*)&newConfig, NULL);
+        if (!NT_SUCCESS(status)) {
+            DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer failed! Status 0x%x\n", status));
+            break;
+        }
+
+        // 3. ДИАГНОСТИКА И ВАЛИДАЦИЯ COUNT
+        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 3: Got Buffer. Count: %lu **\n", newConfig->Count));
+        DebugPrint(("KBFILTR IOCTL: [DEBUG-ALIGN] Received raw Count value: %lu\n", newConfig->Count));
+
+        DebugPrint(("KBFILTR IOCTL: Received Count: %lu, Max Allowed: %d\n", newConfig->Count, MAX_BLOCKED_KEYS));
+        if (newConfig->Count > MAX_BLOCKED_KEYS) {
+            status = STATUS_INVALID_PARAMETER;
+            DebugPrint(("KBFILTR IOCTL: ERROR: Invalid parameter (Count too high)! Status 0x%x\n", status));
+            break;
+        }
+
+        // 4. КОПИРОВАНИЕ ДАННЫХ В КОНТЕКСТ ДРАЙВЕРА С БЛОКИРОВКОЙ
+        WdfSpinLockAcquire(devExt->ConfigLock);
+        RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
+        WdfSpinLockRelease(devExt->ConfigLock);
+
+        // 5. ПОДТВЕРЖДЕНИЕ ВЫВОДОМ
+        DebugPrint(("KBFILTR IOCTL: Successfully updated keys. Final Count: %lu\n", devExt->BlockedKeys.Count));
+        for (ULONG i = 0; i < devExt->BlockedKeys.Count; i++) {
+            DebugPrint(("KBFILTR IOCTL: Key[%lu] set to 0x%x\n", i, devExt->BlockedKeys.Keys[i]));
+        }
+
+        bytesTransferred = 0;
+    }
+    break;
+
     case IOCTL_KBFILTR_GET_KEYBOARD_ATTRIBUTES:
+        // Перенаправляем запрос Query Attributes родительскому фильтру, который знает атрибуты.
         WDF_REQUEST_FORWARD_OPTIONS_INIT(&forwardOptions);
         status = WdfRequestForwardToParentDeviceIoQueue(Request, pdoData->ParentQueue, &forwardOptions);
         if (!NT_SUCCESS(status)) {
             WdfRequestComplete(Request, status);
         }
-        break;
+        // Возвращаемся, так как запрос был перенаправлен, и будет завершен в другом месте.
+        return;
+
     default:
-        WdfRequestComplete(Request, status);
+        // Неизвестный или нереализованный IOCTL
+        status = STATUS_NOT_IMPLEMENTED;
         break;
     }
 
+    DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 4: Completing request with status 0x%x **\n", status));
+
+    // Завершаем запрос, если он не был перенаправлен (в случае IOCTL_KBFILTR_SET_BLOCKED_KEYS)
+    WdfRequestCompleteWithInformation(Request, status, bytesTransferred);
+
     return;
 }
-
 #define MAX_ID_LEN 128
 
 NTSTATUS
