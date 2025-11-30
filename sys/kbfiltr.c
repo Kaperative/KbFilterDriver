@@ -156,7 +156,7 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
     {
         PBLOCKED_KEYS_CONFIG newConfig = NULL;
 
-        // 1. ПРОВЕРКА: Размер буфера
+        
         DebugPrint(("KBFILTR IOCTL: InputBufferLength: %zu, Expected size: %zu\n", InputBufferLength, sizeof(BLOCKED_KEYS_CONFIG)));
         if (InputBufferLength < sizeof(BLOCKED_KEYS_CONFIG)) {
             status = STATUS_BUFFER_TOO_SMALL;
@@ -169,6 +169,8 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
             DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer failed! Status 0x%x\n", status));
             break;
         }
+        DebugPrint(("KBFILTR IOCTL: [DEBUG-ALIGN] Received raw Count value: %lu\n", newConfig->Count));
+
 
         DebugPrint(("KBFILTR IOCTL: Received Count: %lu, Max Allowed: %d\n", newConfig->Count, MAX_BLOCKED_KEYS));
         if (newConfig->Count > MAX_BLOCKED_KEYS) {
