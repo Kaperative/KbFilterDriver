@@ -175,7 +175,17 @@ Return Value:
     }
 
     filterExt = FilterGetData(hDevice);
-
+    {
+        WDF_OBJECT_ATTRIBUTES lockAttrs;
+        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttrs);
+        status = WdfSpinLockCreate(&lockAttrs, &filterExt->BlockedLock);
+        if (!NT_SUCCESS(status)) {
+            DebugPrint(("WdfSpinLockCreate failed 0x%x\n", status));
+            return status;
+        }
+        // инициализируем массив
+        RtlZeroMemory(filterExt->BlockedScanCodes, sizeof(filterExt->BlockedScanCodes));
+    }
     //
     // Configure the default queue to be Parallel. Do not use sequential queue
     // if this driver is going to be filtering PS2 ports because it can lead to
@@ -772,39 +782,74 @@ KbFilter_ServiceCallback(
 {
     PDEVICE_EXTENSION   devExt;
     WDFDEVICE           hDevice;
-    PKEYBOARD_INPUT_DATA curr;
+
     ULONG               consumed = 0;
-    ULONG               packetsConsumed = 0;
+
     PSERVICE_CALLBACK_ROUTINE classService;
+
+    PKEYBOARD_INPUT_DATA pCur, pRunStart;
+    ULONG totalPackets, runCount = 0, i;
+
+
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
     devExt = FilterGetData(hDevice);
+    // total number of packets in this batch
+    totalPackets = (ULONG)(InputDataEnd - InputDataStart);
+
+    // iterate packets and forward only allowed runs
+    pCur = InputDataStart;
+    pRunStart = NULL;
 
     classService    = *(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR)devExt->UpperConnectData.ClassService;
 
-    for (curr = InputDataStart; curr < InputDataEnd; curr++) {
-        // 1. Блокировка клавиши TAB (0x0F)
-        if (curr->MakeCode == 0x0F) {
-            consumed++;
-            continue; // Пропускаем отправку
+   for (i = 0; i < totalPackets; i++, pCur++) {
+        UCHAR blocked = 0;
+        // check blocked under spinlock
+        WdfSpinLockAcquire(devExt->BlockedLock);
+        if (pCur->MakeCode < MAX_SCANCODE) {
+            blocked = devExt->BlockedScanCodes[pCur->MakeCode];
         }
+        WdfSpinLockRelease(devExt->BlockedLock);
 
-
-        // 2. Подмена: Нажатие 'Z' (0x2C) превращается в 'X' (0x2D)
-        if (curr->MakeCode == 0x2C) {
-            curr->MakeCode = 0x2D;
+        if (!blocked) {
+            // allowed
+            if (pRunStart == NULL) {
+                pRunStart = pCur;
+                runCount = 1;
+            } else {
+                runCount++;
+            }
+        } else {
+            // blocked packet encountered -> flush any pending run
+            if (runCount > 0) {
+                // call upper service with contiguous run
+                (*(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR) devExt->UpperConnectData.ClassService)(
+                    devExt->UpperConnectData.ClassDeviceObject,
+                    pRunStart,
+                    pRunStart + runCount,
+                    &consumed // note: the upper service will set consumed for this call
+                );
+                // we don't use consumed returned by upper call; we will set total below
+                pRunStart = NULL;
+                runCount = 0;
+            }
+            // blocked: do nothing (drop packet)
         }
-
-        classService(
-            devExt->UpperConnectData.ClassDeviceObject,
-            curr,
-            curr + 1,
-            &packetsConsumed
-        );
-        consumed += packetsConsumed;
     }
 
-    *InputDataConsumed = consumed;
+    // flush last run if any
+    if (runCount > 0) {
+        (*(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR) devExt->UpperConnectData.ClassService)(
+            devExt->UpperConnectData.ClassDeviceObject,
+            pRunStart,
+            pRunStart + runCount,
+            &consumed
+        );
+    }
+
+    // indicate that we've consumed all packets (both forwarded and dropped)
+    *InputDataConsumed = totalPackets;
 }
 
 

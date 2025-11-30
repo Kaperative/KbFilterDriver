@@ -55,7 +55,7 @@ Environment:
 #endif
 
 #define MIN(_A_,_B_) (((_A_) < (_B_)) ? (_A_) : (_B_))
-
+#define MAX_SCANCODE 256
 typedef struct _DEVICE_EXTENSION
 {
     WDFDEVICE WdfDevice;
@@ -101,7 +101,8 @@ typedef struct _DEVICE_EXTENSION
     // Cached Keyboard Attributes
     //
     KEYBOARD_ATTRIBUTES KeyboardAttributes;
-
+    WDFSPINLOCK BlockedLock;
+    UCHAR BlockedScanCodes[MAX_SCANCODE]; // 0 = allowed, 1 = blocked
 } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
 
 WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(DEVICE_EXTENSION,

@@ -8,4 +8,11 @@
                                                         METHOD_BUFFERED,    \
                                                         FILE_READ_DATA)
 
+#define IOCTL_KBFILTR_SET_BLOCKED_SCANCODE CTL_CODE( FILE_DEVICE_KEYBOARD, \
+                                                    IOCTL_INDEX + 1, \
+                                                    METHOD_BUFFERED, \
+                                                    FILE_WRITE_DATA)
+
+#define KBFILTR_POOL_TAG 'tlfK'
+
 #endif
