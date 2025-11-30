@@ -175,17 +175,23 @@ Return Value:
     }
 
     filterExt = FilterGetData(hDevice);
-    {
-        WDF_OBJECT_ATTRIBUTES lockAttrs;
-        WDF_OBJECT_ATTRIBUTES_INIT(&lockAttrs);
-        status = WdfSpinLockCreate(&lockAttrs, &filterExt->BlockedLock);
-        if (!NT_SUCCESS(status)) {
-            DebugPrint(("WdfSpinLockCreate failed 0x%x\n", status));
-            return status;
-        }
-        // инициализируем массив
-        RtlZeroMemory(filterExt->BlockedScanCodes, sizeof(filterExt->BlockedScanCodes));
+
+
+    // --- ДОБАВИТЬ ЭТО ---
+    WDF_OBJECT_ATTRIBUTES spinLockAttributes;
+    WDF_OBJECT_ATTRIBUTES_INIT(&spinLockAttributes);
+    spinLockAttributes.ParentObject = hDevice; // Чтобы удалился вместе с устройством
+
+    status = WdfSpinLockCreate(&spinLockAttributes, &filterExt->ConfigLock);
+    if (!NT_SUCCESS(status)) {
+        DebugPrint(("WdfSpinLockCreate failed 0x%x\n", status));
+        return status;
     }
+
+    // Инициализируем пустым списком
+    filterExt->BlockedKeys.Count = 0;
+    // --------------------
+
     //
     // Configure the default queue to be Parallel. Do not use sequential queue
     // if this driver is going to be filtering PS2 ports because it can lead to
@@ -304,6 +310,36 @@ Return Value:
     //
 
     switch (IoControlCode) {
+    case IOCTL_KBFILTR_SET_BLOCKED_KEYS:
+    {
+        PBLOCKED_KEYS_CONFIG newConfig = NULL;
+
+        // Проверяем размер входного буфера
+        if (InputBufferLength < sizeof(BLOCKED_KEYS_CONFIG)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+
+        status = WdfRequestRetrieveInputBuffer(Request, sizeof(BLOCKED_KEYS_CONFIG), (PVOID*)&newConfig, NULL);
+        if (!NT_SUCCESS(status)) {
+            break;
+        }
+
+        if (newConfig->Count > MAX_BLOCKED_KEYS) {
+            status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+
+        // ЗАЩИЩЕННАЯ СЕКЦИЯ: Обновляем конфигурацию
+        WdfSpinLockAcquire(devExt->ConfigLock);
+
+        RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
+
+        WdfSpinLockRelease(devExt->ConfigLock);
+
+        bytesTransferred = 0;
+    }
+    break;
     case IOCTL_KBFILTR_GET_KEYBOARD_ATTRIBUTES:
         
         //
@@ -333,7 +369,9 @@ Return Value:
 
         bytesTransferred = sizeof(KEYBOARD_ATTRIBUTES);
         
-        break;    
+        break;  
+
+
     default:
         status = STATUS_NOT_IMPLEMENTED;
         break;
@@ -782,74 +820,55 @@ KbFilter_ServiceCallback(
 {
     PDEVICE_EXTENSION   devExt;
     WDFDEVICE           hDevice;
-
+    PKEYBOARD_INPUT_DATA curr;
     ULONG               consumed = 0;
-
+    ULONG               packetsConsumed = 0;
     PSERVICE_CALLBACK_ROUTINE classService;
-
-    PKEYBOARD_INPUT_DATA pCur, pRunStart;
-    ULONG totalPackets, runCount = 0, i;
-
-
+    ULONG i;
+    BOOLEAN shouldBlock;
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
     devExt = FilterGetData(hDevice);
-    // total number of packets in this batch
-    totalPackets = (ULONG)(InputDataEnd - InputDataStart);
+    classService = *(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR)devExt->UpperConnectData.ClassService;
+    for (curr = InputDataStart; curr < InputDataEnd; curr++) {
 
-    // iterate packets and forward only allowed runs
-    pCur = InputDataStart;
-    pRunStart = NULL;
+        shouldBlock = FALSE;
 
-    classService    = *(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR)devExt->UpperConnectData.ClassService;
+        // --- ДИНАМИЧЕСКАЯ ПРОВЕРКА ---
+        // Захватываем SpinLock, так как список может меняться
+        WdfSpinLockAcquire(devExt->ConfigLock);
 
-   for (i = 0; i < totalPackets; i++, pCur++) {
-        UCHAR blocked = 0;
-        // check blocked under spinlock
-        WdfSpinLockAcquire(devExt->BlockedLock);
-        if (pCur->MakeCode < MAX_SCANCODE) {
-            blocked = devExt->BlockedScanCodes[pCur->MakeCode];
-        }
-        WdfSpinLockRelease(devExt->BlockedLock);
-
-        if (!blocked) {
-            // allowed
-            if (pRunStart == NULL) {
-                pRunStart = pCur;
-                runCount = 1;
-            } else {
-                runCount++;
+        for (i = 0; i < devExt->BlockedKeys.Count; i++) {
+            if (curr->MakeCode == devExt->BlockedKeys.Keys[i]) {
+                shouldBlock = TRUE;
+                break;
             }
-        } else {
-            // blocked packet encountered -> flush any pending run
-            if (runCount > 0) {
-                // call upper service with contiguous run
-                (*(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR) devExt->UpperConnectData.ClassService)(
-                    devExt->UpperConnectData.ClassDeviceObject,
-                    pRunStart,
-                    pRunStart + runCount,
-                    &consumed // note: the upper service will set consumed for this call
-                );
-                // we don't use consumed returned by upper call; we will set total below
-                pRunStart = NULL;
-                runCount = 0;
-            }
-            // blocked: do nothing (drop packet)
         }
-    }
 
-    // flush last run if any
-    if (runCount > 0) {
-        (*(PSERVICE_CALLBACK_ROUTINE)(ULONG_PTR) devExt->UpperConnectData.ClassService)(
+        WdfSpinLockRelease(devExt->ConfigLock);
+        // -----------------------------
+
+        if (shouldBlock) {
+            DebugPrint(("Blocked key: 0x%x\n", curr->MakeCode));
+            consumed++;
+            continue; // Пропускаем отправку клавиши дальше
+        }
+
+        // Ваш старый код замены Z на X (если нужен)
+        if (curr->MakeCode == 0x2C) {
+            curr->MakeCode = 0x2D;
+        }
+
+        classService(
             devExt->UpperConnectData.ClassDeviceObject,
-            pRunStart,
-            pRunStart + runCount,
-            &consumed
+            curr,
+            curr + 1,
+            &packetsConsumed
         );
+        consumed += packetsConsumed;
     }
 
-    // indicate that we've consumed all packets (both forwarded and dropped)
-    *InputDataConsumed = totalPackets;
+    *InputDataConsumed = consumed;
 }
 
 
