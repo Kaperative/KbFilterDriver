@@ -527,7 +527,7 @@ VOID KbFilter_ServiceCallback(
     for (curr = InputDataStart; curr < InputDataEnd; curr++) {
 
         shouldBlock = FALSE;
-        targetMakeCode = curr->MakeCode;
+       
         if (devExt->RemappingEnabled && devExt->RemapConfig.Count > 0) {
             USHORT originalCode = curr->MakeCode;
 
@@ -547,28 +547,9 @@ VOID KbFilter_ServiceCallback(
 
             WdfSpinLockRelease(devExt->ConfigLock);
         }
-        if (devExt->RemappingEnabled) {
-            USHORT originalCode = curr->MakeCode;
+     
+        targetMakeCode = curr->MakeCode;
 
-            WdfSpinLockAcquire(devExt->ConfigLock);
-
-            for (i = 0; i < devExt->RemapConfig.Count; i++) {
-
-                // Если MakeCode совпадает с OriginalMakeCode в списке
-                if (originalCode == devExt->RemapConfig.Remaps[i].OriginalMakeCode) {
-
-                    // Подменяем MakeCode на NewMakeCode
-                    curr->MakeCode = devExt->RemapConfig.Remaps[i].NewMakeCode;
-
-                    DebugPrint(("KBFILTR: Key Remap: 0x%x -> 0x%x\n", originalCode, curr->MakeCode));
-                    break;
-                }
-            }
-
-            WdfSpinLockRelease(devExt->ConfigLock);
-        }
-
-        // Если это Break Code, вычисляем Make Code для проверки
         if (curr->Flags & KEY_BREAK) {
             targetMakeCode = curr->MakeCode & 0x7F; // Или curr->MakeCode - 0x80
         }
