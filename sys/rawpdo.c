@@ -91,70 +91,49 @@ Return Value:
         break;
     case IOCTL_KBFILTR_SET_BLOCKED_SCANCODE:
     {
-        NTSTATUS st2;
-        PDEVICE_EXTENSION devExt2;
-        WDFMEMORY inputMem;
+        typedef struct _BLOCK_CMD {
+            ULONG Scancode;
+            ULONG Action;
+        } BLOCK_CMD;
+
+        BLOCK_CMD cmd = { 0 };
+
         PVOID inBuf = NULL;
         size_t inLen = 0;
+        NTSTATUS st = WdfRequestRetrieveInputBuffer(
+            Request,
+            sizeof(ULONG),
+            &inBuf,
+            &inLen
+        );
 
-        // локальная "безопасная" структура
-        typedef struct _KBFILTR_BLOCK_CMD {
-            ULONG Scancode;
-            ULONG Action; // 1 = block, 0 = unblock
-        } KBFILTR_BLOCK_CMD;
-        KBFILTR_BLOCK_CMD cmdLocal = { 0 };
-
-        devExt2 = FilterGetData(WdfIoQueueGetDevice(Queue));
-
-        // Получаем память запроса
-        st2 = WdfRequestRetrieveInputMemory(Request, &inputMem);
-        if (!NT_SUCCESS(st2)) {
-            DebugPrint(("KbFilter: WdfRequestRetrieveInputMemory failed 0x%x\n", st2));
-            WdfRequestComplete(Request, st2);
+        if (!NT_SUCCESS(st)) {
+            WdfRequestComplete(Request, st);
             return;
         }
 
-        // Получаем указатель и длину ОДИН РАЗ
-        inBuf = WdfMemoryGetBuffer(inputMem, &inLen);
-        if (inBuf == NULL || inLen == 0) {
-            DebugPrint(("KbFilter: WdfMemoryGetBuffer returned NULL or zero length\n"));
-            WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
-            return;
-        }
-
-        // Проверяем минимальный размер — поддерживаем минимум только Scancode (ULONG),
-        // и при наличии второго ULONG читаем action.
-        if (inLen < sizeof(ULONG)) {
-            DebugPrint(("KbFilter: input buffer too small (%Iu)\n", inLen));
-            WdfRequestComplete(Request, STATUS_BUFFER_TOO_SMALL);
-            return;
-        }
-
-        // Безопасно копируем минимум sizeof(ULONG) или всю структуру если есть
-        if (inLen >= sizeof(KBFILTR_BLOCK_CMD)) {
-            // копируем оба поля
-            RtlCopyMemory(&cmdLocal, inBuf, sizeof(KBFILTR_BLOCK_CMD));
+        if (inLen >= sizeof(BLOCK_CMD)) {
+            RtlCopyMemory(&cmd, inBuf, sizeof(BLOCK_CMD));
         }
         else {
-            // есть только scancode
-            RtlCopyMemory(&cmdLocal.Scancode, inBuf, sizeof(ULONG));
-            cmdLocal.Action = 1; // по умолчанию — блокировать, если action не передан
+            RtlCopyMemory(&cmd.Scancode, inBuf, sizeof(ULONG));
+            cmd.Action = 1;
         }
 
-        // Валидация
-        if (cmdLocal.Scancode >= MAX_SCANCODE) {
-            DebugPrint(("KbFilter: invalid scancode %u\n", cmdLocal.Scancode));
+        if (cmd.Scancode >= MAX_SCANCODE) {
             WdfRequestComplete(Request, STATUS_INVALID_PARAMETER);
             return;
         }
-        if (cmdLocal.Action != 0) cmdLocal.Action = 1; // нормализуем
 
-        // Обновляем таблицу под спинлоком
-        WdfSpinLockAcquire(devExt2->BlockedLock);
-        devExt2->BlockedScanCodes[cmdLocal.Scancode] = (UCHAR)(cmdLocal.Action ? 1 : 0);
-        WdfSpinLockRelease(devExt2->BlockedLock);
+        //
+        // ВАЖНО: получить device extension РОДИТЕЛЬСКОГО FILTER-FDO
+        //
+        WDFDEVICE parentFdo = WdfIoQueueGetDevice(Queue);
+        PDEVICE_EXTENSION devExt = FilterGetData(parentFdo);
 
-        DebugPrint(("KbFilter: set scancode %u action %u\n", cmdLocal.Scancode, cmdLocal.Action));
+        WdfSpinLockAcquire(devExt->BlockedLock);
+        devExt->BlockedScanCodes[cmd.Scancode] = (UCHAR)cmd.Action;
+        WdfSpinLockRelease(devExt->BlockedLock);
 
         WdfRequestComplete(Request, STATUS_SUCCESS);
         return;
