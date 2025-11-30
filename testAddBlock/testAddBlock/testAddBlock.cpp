@@ -5,20 +5,25 @@
 #include <initguid.h>
 #include <iostream>
 #include <vector>
+#include <string>
 
 // Подключаем библиотеку SetupAPI для поиска устройств
 #pragma comment(lib, "setupapi.lib")
 
-#include "public.h" // Ваш заголовок с IOCTL и struct
+// --- Здесь должен быть ваш public.h, с определениями IOCTL и BLOCKED_KEYS_CONFIG ---
+// Для корректной работы обязательно унифицируйте упаковку структур
+// #pragma pack(push, 1)
+// typedef struct _BLOCKED_KEYS_CONFIG { ... }
+// #pragma pack(pop)
+#include "public.h" 
 
-// Убедитесь, что этот GUID совпадает с тем, что в драйвере (kbfiltr.h / inf файле)
-// {A65C87F9-BE02-4ed9-92EC-012D416169FA} - GUID_BUS_KBFILTER (используется как ID шины в примере MS)
 // {3FB7299D-6847-4490-B0C9-99E0986AB886} - GUID_DEVINTERFACE_KBFILTER
 DEFINE_GUID(GUID_DEVINTERFACE_KBFILTER,
     0x3fb7299d, 0x6847, 0x4490, 0xb0, 0xc9, 0x99, 0xe0, 0x98, 0x6a, 0xb8, 0x86);
 
-// Функция для получения пути к устройству (Symbolic Link) по GUID
-BOOL GetDevicePath(LPGUID InterfaceGuid, std::wstring& DevicePath)
+
+// Новая функция для поиска и сохранения всех путей устройств по GUID
+BOOL FindAllDevicePaths(LPGUID InterfaceGuid, std::vector<std::wstring>& DevicePaths)
 {
     // 1. Получаем список всех устройств с этим интерфейсом
     HDEVINFO hDevInfo = SetupDiGetClassDevs(
@@ -36,55 +41,70 @@ BOOL GetDevicePath(LPGUID InterfaceGuid, std::wstring& DevicePath)
     SP_DEVICE_INTERFACE_DATA deviceInterfaceData;
     deviceInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
-    // 2. Берем первое попавшееся устройство (индекс 0)
-    // Если у вас несколько клавиатур и драйвер стоит на всех, можно сделать цикл
-    if (!SetupDiEnumDeviceInterfaces(hDevInfo, NULL, InterfaceGuid, 0, &deviceInterfaceData)) {
-        printf("SetupDiEnumDeviceInterfaces failed. Device not found.\n");
-        SetupDiDestroyDeviceInfoList(hDevInfo);
-        return FALSE;
+    DWORD deviceIndex = 0;
+    BOOL foundAny = FALSE;
+
+    // Цикл по всем устройствам
+    while (SetupDiEnumDeviceInterfaces(hDevInfo, NULL, InterfaceGuid, deviceIndex, &deviceInterfaceData))
+    {
+        foundAny = TRUE;
+
+        // 2. Узнаем, сколько памяти нужно для пути
+        DWORD requiredSize = 0;
+        SetupDiGetDeviceInterfaceDetail(hDevInfo, &deviceInterfaceData, NULL, 0, &requiredSize, NULL);
+
+        if (requiredSize > 0)
+        {
+            // 3. Выделяем память
+            std::vector<BYTE> buffer(requiredSize);
+            PSP_DEVICE_INTERFACE_DETAIL_DATA detailData = (PSP_DEVICE_INTERFACE_DETAIL_DATA)buffer.data();
+            detailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+
+            // 4. Получаем сам путь
+            if (SetupDiGetDeviceInterfaceDetail(hDevInfo, &deviceInterfaceData, detailData, requiredSize, NULL, NULL)) {
+                DevicePaths.push_back(detailData->DevicePath);
+            }
+        }
+        deviceIndex++;
     }
-
-    // 3. Узнаем, сколько памяти нужно для пути
-    DWORD requiredSize = 0;
-    SetupDiGetDeviceInterfaceDetail(hDevInfo, &deviceInterfaceData, NULL, 0, &requiredSize, NULL);
-
-    if (requiredSize == 0) {
-        printf("SetupDiGetDeviceInterfaceDetail failed to get size.\n");
-        SetupDiDestroyDeviceInfoList(hDevInfo);
-        return FALSE;
-    }
-
-    // 4. Выделяем память
-    std::vector<BYTE> buffer(requiredSize);
-    PSP_DEVICE_INTERFACE_DETAIL_DATA detailData = (PSP_DEVICE_INTERFACE_DETAIL_DATA)buffer.data();
-    detailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
-
-    // 5. Получаем сам путь
-    if (!SetupDiGetDeviceInterfaceDetail(hDevInfo, &deviceInterfaceData, detailData, requiredSize, NULL, NULL)) {
-        printf("SetupDiGetDeviceInterfaceDetail failed to get path.\n");
-        SetupDiDestroyDeviceInfoList(hDevInfo);
-        return FALSE;
-    }
-
-    // Сохраняем путь в строку
-    DevicePath = detailData->DevicePath;
 
     SetupDiDestroyDeviceInfoList(hDevInfo);
-    return TRUE;
+
+    return foundAny;
 }
 
+
 int main() {
-    std::wstring devicePath;
+    std::vector<std::wstring> devicePaths;
 
-    printf("Searching for Keyboard Filter Device...\n");
+    printf("Searching for ALL Keyboard Filter Devices (Raw PDO GUID)...\n");
 
-    // Ищем путь автоматически
-    if (!GetDevicePath((LPGUID)&GUID_DEVINTERFACE_KBFILTER, devicePath)) {
-        printf("Error: Could not find the device. Is the driver installed?\n");
+    // Ищем все пути автоматически
+    if (!FindAllDevicePaths((LPGUID)&GUID_DEVINTERFACE_KBFILTER, devicePaths)) {
+        printf("Error: Could not find any device. Is the driver installed?\n");
         return 1;
     }
 
-    wprintf(L"Found device at: %s\n", devicePath.c_str());
+    if (devicePaths.empty()) {
+        printf("Error: Device enumeration found 0 devices.\n");
+        return 1;
+    }
+
+    // -------------------------------------------------------------------
+    // ВЫВОД ВСЕХ НАЙДЕННЫХ УСТРОЙСТВ
+    // -------------------------------------------------------------------
+    wprintf(L"\n--- Found %zu device(s) with GUID {3FB7...} ---\n", devicePaths.size());
+    for (size_t i = 0; i < devicePaths.size(); ++i) {
+        wprintf(L"[%zu] Path: %s\n", i, devicePaths[i].c_str());
+    }
+    wprintf(L"----------------------------------------------------\n\n");
+
+    // -------------------------------------------------------------------
+    // ОТПРАВКА IOCTL: Берем первое найденное устройство для теста
+    // -------------------------------------------------------------------
+    std::wstring devicePath = devicePaths[0];
+
+    wprintf(L"Attempting to open device #0: %s\n", devicePath.c_str());
 
     // Открываем файл по найденному пути
     HANDLE hDevice = CreateFile(
@@ -98,20 +118,20 @@ int main() {
     );
 
     if (hDevice == INVALID_HANDLE_VALUE) {
-        printf("Failed to open device. Error: %d\n", GetLastError());
+        printf("Failed to open device #0. Error: %d\n", GetLastError());
         return 1;
     }
 
     // Подготовка данных для отправки
     BLOCKED_KEYS_CONFIG config;
-    RtlZeroMemory(&config, sizeof(config)); // Хорошая практика обнулять память
+    RtlZeroMemory(&config, sizeof(config));
 
     config.Count = 3;
     config.Keys[0] = 0x0F; // TAB
     config.Keys[1] = 0x1C; // ENTER
-    config.Keys[2] = 0x39; // SPACE (Пробел - для теста)
+    config.Keys[2] = 0x39; // SPACE 
 
-    printf("Sending IOCTL to block %d keys...\n", config.Count);
+    printf("Sending IOCTL to block %lu keys...\n", config.Count);
 
     DWORD bytesReturned;
     BOOL result = DeviceIoControl(
@@ -124,13 +144,24 @@ int main() {
     );
 
     if (result) {
-        printf("Success! Keys blocked.\n");
+        printf("Success! Keys blocked on device #0.\n");
     }
     else {
         printf("Failed to send IOCTL. Error: %d\n", GetLastError());
     }
 
     CloseHandle(hDevice);
+
+    // -------------------------------------------------------------------
+    // ДОПОЛНИТЕЛЬНЫЙ ШАГ: Если вы хотите отправить IOCTL ВСЕМ устройствам
+    // (Полезно, если у вас несколько клавиатур и вы не уверены, какой индекс верен)
+    // -------------------------------------------------------------------
+    /*
+    if (devicePaths.size() > 1) {
+        printf("\nSending IOCTL to all remaining devices...\n");
+        // Здесь можно добавить цикл по всем устройствам и отправить команду каждому.
+    }
+    */
 
     printf("Press Enter to exit...");
     getchar();

@@ -170,7 +170,6 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
             break;
         }
 
-        // 2. ÏÐÎÂÅÐÊÀ: Êîëè÷åñòâî ýëåìåíòîâ
         DebugPrint(("KBFILTR IOCTL: Received Count: %lu, Max Allowed: %d\n", newConfig->Count, MAX_BLOCKED_KEYS));
         if (newConfig->Count > MAX_BLOCKED_KEYS) {
             status = STATUS_INVALID_PARAMETER;
@@ -178,12 +177,10 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
             break;
         }
 
-        // 3. ÓÑÏÅØÍÎÅ ÊÎÏÈÐÎÂÀÍÈÅ È ÄÈÀÃÍÎÑÒÈÊÀ
         WdfSpinLockAcquire(devExt->ConfigLock);
         RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
         WdfSpinLockRelease(devExt->ConfigLock);
 
-        // Äèàãíîñòè÷åñêèé âûâîä: ýòîò áëîê äîëæåí áûòü âûïîëíåí, åñëè âñå ïðîâåðêè ïðîøëè
         DebugPrint(("KBFILTR IOCTL: Successfully updated keys. Final Count: %lu\n", devExt->BlockedKeys.Count));
         for (ULONG i = 0; i < devExt->BlockedKeys.Count; i++) {
             DebugPrint(("KBFILTR IOCTL: Key[%lu] set to 0x%x\n", i, devExt->BlockedKeys.Keys[i]));
