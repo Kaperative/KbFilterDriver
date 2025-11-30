@@ -501,7 +501,7 @@ VOID KbFilter_ServiceCallback(
     ULONG               packetsConsumed = 0;
     PSERVICE_CALLBACK_ROUTINE classService;
     ULONG i;
-    BOOLEAN shouldBlock;
+    BOOLEAN shouldBlock = FALSE; // Инициализируем здесь
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
     devExt = FilterGetData(hDevice);
@@ -518,12 +518,12 @@ VOID KbFilter_ServiceCallback(
         }
 
         // 2. ДИНАМИЧЕСКАЯ ПРОВЕРКА (IOCTL список)
-        if (!shouldBlock) { // Проверяем динамический список, только если 'X' не нажата
+        // Проверяем динамический список только в том случае, если клавиша еще не заблокирована.
+        if (!shouldBlock) {
 
             WdfSpinLockAcquire(devExt->ConfigLock);
 
             for (i = 0; i < devExt->BlockedKeys.Count; i++) {
-                // Сравниваем скан-код нажатой клавиши с нашим списком
                 if (curr->MakeCode == devExt->BlockedKeys.Keys[i]) {
                     shouldBlock = TRUE;
                     break;
@@ -532,18 +532,18 @@ VOID KbFilter_ServiceCallback(
 
             WdfSpinLockRelease(devExt->ConfigLock);
         }
+
         // -----------------------------------------------------
-        if (curr->MakeCode != 0x2D) {
-            DebugPrint(("KBFILTR: Dynamically blocked key with MakeCode 0x%x.\n", curr->MakeCode));
-            consumed++;
-        }
+
         if (shouldBlock) {
-            // Если нужно заблокировать, просто увеличиваем счетчик consumed
+            // ЭТО ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ПРОИСХОДИТ БЛОКИРОВКА И ИНКРЕМЕНТ.
             consumed++;
 
-            // Если блокировка статическая, мы уже вывели DebugPrint, иначе выводим общую
-            
-            continue;
+            // Если блокировка динамическая, выводим сообщение о ней.
+            if (curr->MakeCode != 0x2D) {
+                DebugPrint(("KBFILTR: Dynamically blocked key with MakeCode 0x%x.\n", curr->MakeCode));
+            }
+            continue; // Ключ съеден, переходим к следующему пакету.
         }
 
         // Если не заблокировано — отправляем дальше в систему
@@ -558,7 +558,6 @@ VOID KbFilter_ServiceCallback(
 
     *InputDataConsumed = consumed;
 }
-
 
 VOID
 KbFilterRequestCompletionRoutine(
