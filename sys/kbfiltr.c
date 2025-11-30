@@ -146,7 +146,7 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
 
     UNREFERENCED_PARAMETER(InputBufferLength);
 
-    DebugPrint(("Entered KbFilter_EvtIoInternalDeviceControl\n"));
+    DebugPrint(("KBFILTR IOCTL: *** Request received for Code 0x%x ***\n", IoControlCode));
 
     hDevice = WdfIoQueueGetDevice(Queue);
     devExt = FilterGetData(hDevice);
@@ -156,35 +156,38 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
     {
         PBLOCKED_KEYS_CONFIG newConfig = NULL;
 
-        // Проверяем размер входного буфера
+        // 1. ПРОВЕРКА: Размер буфера
+        DebugPrint(("KBFILTR IOCTL: InputBufferLength: %zu, Expected size: %zu\n", InputBufferLength, sizeof(BLOCKED_KEYS_CONFIG)));
         if (InputBufferLength < sizeof(BLOCKED_KEYS_CONFIG)) {
             status = STATUS_BUFFER_TOO_SMALL;
+            DebugPrint(("KBFILTR IOCTL: ERROR: Buffer too small! Status 0x%x\n", status));
             break;
         }
 
         status = WdfRequestRetrieveInputBuffer(Request, sizeof(BLOCKED_KEYS_CONFIG), (PVOID*)&newConfig, NULL);
         if (!NT_SUCCESS(status)) {
+            DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer failed! Status 0x%x\n", status));
             break;
         }
 
+        // 2. ПРОВЕРКА: Количество элементов
+        DebugPrint(("KBFILTR IOCTL: Received Count: %lu, Max Allowed: %d\n", newConfig->Count, MAX_BLOCKED_KEYS));
         if (newConfig->Count > MAX_BLOCKED_KEYS) {
             status = STATUS_INVALID_PARAMETER;
+            DebugPrint(("KBFILTR IOCTL: ERROR: Invalid parameter (Count too high)! Status 0x%x\n", status));
             break;
         }
 
-        // ЗАЩИЩЕННАЯ СЕКЦИЯ: Обновляем конфигурацию
+        // 3. УСПЕШНОЕ КОПИРОВАНИЕ И ДИАГНОСТИКА
         WdfSpinLockAcquire(devExt->ConfigLock);
-
         RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
-
         WdfSpinLockRelease(devExt->ConfigLock);
 
-        // --- ДИАГНОСТИЧЕСКИЙ ВЫВОД ---
-        DebugPrint(("KBFILTR IOCTL: Successfully updated keys. Count: %lu\n", devExt->BlockedKeys.Count));
-        for (ULONG i = 0; i < (devExt->BlockedKeys.Count); i++) {
+        // Диагностический вывод: этот блок должен быть выполнен, если все проверки прошли
+        DebugPrint(("KBFILTR IOCTL: Successfully updated keys. Final Count: %lu\n", devExt->BlockedKeys.Count));
+        for (ULONG i = 0; i < devExt->BlockedKeys.Count; i++) {
             DebugPrint(("KBFILTR IOCTL: Key[%lu] set to 0x%x\n", i, devExt->BlockedKeys.Keys[i]));
         }
-        // ------------------------------
 
         bytesTransferred = 0;
     }
