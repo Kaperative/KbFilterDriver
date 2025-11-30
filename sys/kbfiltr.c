@@ -511,26 +511,38 @@ VOID KbFilter_ServiceCallback(
 
         shouldBlock = FALSE;
 
-        // --- ВАЖНО: Захватываем блокировку для чтения списка ---
-        WdfSpinLockAcquire(devExt->ConfigLock);
-
-        for (i = 0; i < devExt->BlockedKeys.Count; i++) {
-            // Сравниваем скан-код нажатой клавиши с нашим списком
-            if (curr->MakeCode == devExt->BlockedKeys.Keys[i]) {
-                shouldBlock = TRUE;
-                break;
-            }
+        // 1. СТАТИЧЕСКАЯ ПРОВЕРКА: БЛОКИРОВКА 'X' (Scan Code 0x2D)
+        if (curr->MakeCode == 0x2D) {
+            shouldBlock = TRUE;
+            DebugPrint(("KBFILTR: STATICALLY BLOCKED KEY X (0x2D).\n"));
         }
 
-        WdfSpinLockRelease(devExt->ConfigLock);
-        // -----------------------------------------------------
+        // 2. ДИНАМИЧЕСКАЯ ПРОВЕРКА (IOCTL список)
+        if (!shouldBlock) { // Проверяем динамический список, только если 'X' не нажата
 
+            WdfSpinLockAcquire(devExt->ConfigLock);
+
+            for (i = 0; i < devExt->BlockedKeys.Count; i++) {
+                // Сравниваем скан-код нажатой клавиши с нашим списком
+                if (curr->MakeCode == devExt->BlockedKeys.Keys[i]) {
+                    shouldBlock = TRUE;
+                    break;
+                }
+            }
+
+            WdfSpinLockRelease(devExt->ConfigLock);
+        }
+        // -----------------------------------------------------
+        if (curr->MakeCode != 0x2D) {
+            DebugPrint(("KBFILTR: Dynamically blocked key with MakeCode 0x%x.\n", curr->MakeCode));
+            consumed++;
+        }
         if (shouldBlock) {
             // Если нужно заблокировать, просто увеличиваем счетчик consumed
-            // и переходим к следующей клавише (continue), НЕ вызывая classService
-            
             consumed++;
-            DebugPrint(("KBFILTR: Blocked key with MakeCode 0x%x\n", curr->MakeCode));
+
+            // Если блокировка статическая, мы уже вывели DebugPrint, иначе выводим общую
+            
             continue;
         }
 
