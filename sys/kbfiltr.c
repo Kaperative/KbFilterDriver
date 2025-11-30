@@ -501,7 +501,8 @@ VOID KbFilter_ServiceCallback(
     ULONG               packetsConsumed = 0;
     PSERVICE_CALLBACK_ROUTINE classService;
     ULONG i;
-    BOOLEAN shouldBlock = FALSE; // Инициализируем здесь
+    BOOLEAN shouldBlock = FALSE;
+    USHORT targetMakeCode; // Для хранения чистого Make Code
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
     devExt = FilterGetData(hDevice);
@@ -510,21 +511,29 @@ VOID KbFilter_ServiceCallback(
     for (curr = InputDataStart; curr < InputDataEnd; curr++) {
 
         shouldBlock = FALSE;
+        targetMakeCode = curr->MakeCode;
 
-        // 1. СТАТИЧЕСКАЯ ПРОВЕРКА: БЛОКИРОВКА 'X' (Scan Code 0x2D)
-        if (curr->MakeCode == 0x2D) {
+        // Если это Break Code, вычисляем Make Code для проверки
+        if (curr->Flags & KEY_BREAK) {
+            targetMakeCode = curr->MakeCode & 0x7F; // Или curr->MakeCode - 0x80
+        }
+
+        // 1. СТАТИЧЕСКАЯ ПРОВЕРКА: БЛОКИРОВКА 'X' (Make Code 0x2D)
+        // Проверяем targetMakeCode, чтобы заблокировать и 0x2D, и 0xAD.
+        if (targetMakeCode == 0x2D) {
             shouldBlock = TRUE;
-            DebugPrint(("KBFILTR: STATICALLY BLOCKED KEY X (0x2D).\n"));
+            // При отладке показываем и Make, и Break code
+            DebugPrint(("KBFILTR: STATICALLY BLOCKED X (Make/Break Code: 0x%x).\n", curr->MakeCode));
         }
 
         // 2. ДИНАМИЧЕСКАЯ ПРОВЕРКА (IOCTL список)
-        // Проверяем динамический список только в том случае, если клавиша еще не заблокирована.
         if (!shouldBlock) {
 
             WdfSpinLockAcquire(devExt->ConfigLock);
 
             for (i = 0; i < devExt->BlockedKeys.Count; i++) {
-                if (curr->MakeCode == devExt->BlockedKeys.Keys[i]) {
+                // Сравниваем вычисленный targetMakeCode с нашим списком
+                if (targetMakeCode == devExt->BlockedKeys.Keys[i]) {
                     shouldBlock = TRUE;
                     break;
                 }
@@ -536,14 +545,13 @@ VOID KbFilter_ServiceCallback(
         // -----------------------------------------------------
 
         if (shouldBlock) {
-            // ЭТО ЕДИНСТВЕННОЕ МЕСТО, ГДЕ ПРОИСХОДИТ БЛОКИРОВКА И ИНКРЕМЕНТ.
+            // Ключ съедается.
             consumed++;
 
-            // Если блокировка динамическая, выводим сообщение о ней.
-            if (curr->MakeCode != 0x2D) {
-                DebugPrint(("KBFILTR: Dynamically blocked key with MakeCode 0x%x.\n", curr->MakeCode));
+            if (targetMakeCode != 0x2D) {
+                DebugPrint(("KBFILTR: Dynamically blocked key (Make Code 0x%x, Current Code 0x%x).\n", targetMakeCode, curr->MakeCode));
             }
-            continue; // Ключ съеден, переходим к следующему пакету.
+            continue;
         }
 
         // Если не заблокировано — отправляем дальше в систему
@@ -558,7 +566,6 @@ VOID KbFilter_ServiceCallback(
 
     *InputDataConsumed = consumed;
 }
-
 VOID
 KbFilterRequestCompletionRoutine(
     WDFREQUEST                  Request,
