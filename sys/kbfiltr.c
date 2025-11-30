@@ -150,10 +150,11 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
 
     hDevice = WdfIoQueueGetDevice(Queue);
     devExt = FilterGetData(hDevice);
-
+    DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 1: Before Switch **\n"));
     switch (IoControlCode) {
     case IOCTL_KBFILTR_SET_BLOCKED_KEYS:
     {
+        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 2: Inside Case **\n")); // <-- ÄÎËÆÅÍ ÑÐÀÁÎÒÀÒÜ!
         PBLOCKED_KEYS_CONFIG newConfig = NULL;
 
         
@@ -165,6 +166,7 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
         }
 
         status = WdfRequestRetrieveInputBuffer(Request, sizeof(BLOCKED_KEYS_CONFIG), (PVOID*)&newConfig, NULL);
+        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 3: Got Buffer. Count: %lu **\n", newConfig->Count)); // <-- ÄÎËÆÅÍ ÑÐÀÁÎÒÀÒÜ!
         if (!NT_SUCCESS(status)) {
             DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer failed! Status 0x%x\n", status));
             break;
@@ -227,7 +229,7 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
         status = STATUS_NOT_IMPLEMENTED;
         break;
     }
-    
+    DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 4: Completing request with status 0x%x **\n", status));
     WdfRequestCompleteWithInformation(Request, status, bytesTransferred);
 
     return;
