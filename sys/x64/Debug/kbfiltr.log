@@ -1,6 +1,6 @@
 ﻿  Building 'kbfiltr' with toolset 'WindowsKernelModeDriver10.0' and the 'Windows Driver' target platform.
   Stamping x64\Debug\kbfiltr.inf
-  Stamping [Version] section with DriverVer=11/30/2025,16.17.58.834
+  Stamping [Version] section with DriverVer=11/30/2025,16.39.39.871
   kbfiltr.vcxproj -> C:\Users\user\Desktop\Новая папка\KbFilterDriver\sys\x64\Debug\kbfiltr.sys
   Done Adding Additional Store
   Successfully signed: C:\Users\user\Desktop\ \KbFilterDriver\sys\x64\Debug\kbfiltr.sys
