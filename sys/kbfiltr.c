@@ -1,4 +1,4 @@
-
+ï»¿
 #include "kbfiltr.h"
 
 #ifdef ALLOC_PRAGMA
@@ -76,11 +76,14 @@ KbFilter_EvtDeviceAdd(
     filterExt = FilterGetData(hDevice);
 
 
-    // --- ÄÎÁÀÂÈÒÜ ÝÒÎ ---
+    // --- Ð”ÐžÐ‘ÐÐ’Ð˜Ð¢Ð¬ Ð­Ð¢Ðž ---
     WDF_OBJECT_ATTRIBUTES spinLockAttributes;
     WDF_OBJECT_ATTRIBUTES_INIT(&spinLockAttributes);
-    spinLockAttributes.ParentObject = hDevice; // ×òîáû óäàëèëñÿ âìåñòå ñ óñòðîéñòâîì
+    spinLockAttributes.ParentObject = hDevice; // Ð§Ñ‚Ð¾Ð±Ñ‹ ÑƒÐ´Ð°Ð»Ð¸Ð»ÑÑ Ð²Ð¼ÐµÑÑ‚Ðµ Ñ ÑƒÑÑ‚Ñ€Ð¾Ð¹ÑÑ‚Ð²Ð¾Ð¼
 
+
+
+ 
     status = WdfSpinLockCreate(&spinLockAttributes, &filterExt->ConfigLock);
     if (!NT_SUCCESS(status)) {
         DebugPrint(("WdfSpinLockCreate failed 0x%x\n", status));
@@ -89,6 +92,8 @@ KbFilter_EvtDeviceAdd(
 
     filterExt->BlockedKeys.Count = 0;
 
+    filterExt->RemappingEnabled = FALSE;
+    filterExt->RemapConfig.Count = 0;
 
     WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&ioQueueConfig,
                              WdfIoQueueDispatchParallel);
@@ -154,7 +159,7 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
     switch (IoControlCode) {
     case IOCTL_KBFILTR_SET_BLOCKED_KEYS:
     {
-        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 2: Inside Case **\n")); // <-- ÄÎËÆÅÍ ÑÐÀÁÎÒÀÒÜ!
+        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 2: Inside Case **\n")); // <-- Ð”ÐžÐ›Ð–Ð•Ð Ð¡Ð ÐÐ‘ÐžÐ¢ÐÐ¢Ð¬!
         PBLOCKED_KEYS_CONFIG newConfig = NULL;
 
         
@@ -166,7 +171,7 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
         }
 
         status = WdfRequestRetrieveInputBuffer(Request, sizeof(BLOCKED_KEYS_CONFIG), (PVOID*)&newConfig, NULL);
-        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 3: Got Buffer. Count: %lu **\n", newConfig->Count)); // <-- ÄÎËÆÅÍ ÑÐÀÁÎÒÀÒÜ!
+        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 3: Got Buffer. Count: %lu **\n", newConfig->Count)); // <-- Ð”ÐžÐ›Ð–Ð•Ð Ð¡Ð ÐÐ‘ÐžÐ¢ÐÐ¢Ð¬!
         if (!NT_SUCCESS(status)) {
             DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer failed! Status 0x%x\n", status));
             break;
@@ -513,7 +518,7 @@ VOID KbFilter_ServiceCallback(
     PSERVICE_CALLBACK_ROUTINE classService;
     ULONG i;
     BOOLEAN shouldBlock = FALSE;
-    USHORT targetMakeCode; // Äëÿ õðàíåíèÿ ÷èñòîãî Make Code
+    USHORT targetMakeCode; // Ð”Ð»Ñ Ñ…Ñ€Ð°Ð½ÐµÐ½Ð¸Ñ Ñ‡Ð¸ÑÑ‚Ð¾Ð³Ð¾ Make Code
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
     devExt = FilterGetData(hDevice);
@@ -523,28 +528,62 @@ VOID KbFilter_ServiceCallback(
 
         shouldBlock = FALSE;
         targetMakeCode = curr->MakeCode;
+        if (devExt->RemappingEnabled && devExt->RemapConfig.Count > 0) {
+            USHORT originalCode = curr->MakeCode;
 
-        // Åñëè ýòî Break Code, âû÷èñëÿåì Make Code äëÿ ïðîâåðêè
+            WdfSpinLockAcquire(devExt->ConfigLock);
+
+            for (i = 0; i < devExt->RemapConfig.Count; i++) {
+
+                if (originalCode == devExt->RemapConfig.Remaps[i].OriginalMakeCode) {
+
+                    // ÐœÐžÐ”Ð˜Ð¤Ð˜ÐšÐÐ¦Ð˜Ð¯ MakeCode Ð² ÑÐ°Ð¼Ð¾Ð¼ Ð¿Ð°ÐºÐµÑ‚Ðµ
+                    curr->MakeCode = devExt->RemapConfig.Remaps[i].NewMakeCode;
+
+                    DebugPrint(("KBFILTR: Key Remap Applied: 0x%x -> 0x%x\n", originalCode, curr->MakeCode));
+                    break;
+                }
+            }
+
+            WdfSpinLockRelease(devExt->ConfigLock);
+        }
+        if (devExt->RemappingEnabled) {
+            USHORT originalCode = curr->MakeCode;
+
+            WdfSpinLockAcquire(devExt->ConfigLock);
+
+            for (i = 0; i < devExt->RemapConfig.Count; i++) {
+
+                // Ð•ÑÐ»Ð¸ MakeCode ÑÐ¾Ð²Ð¿Ð°Ð´Ð°ÐµÑ‚ Ñ OriginalMakeCode Ð² ÑÐ¿Ð¸ÑÐºÐµ
+                if (originalCode == devExt->RemapConfig.Remaps[i].OriginalMakeCode) {
+
+                    // ÐŸÐ¾Ð´Ð¼ÐµÐ½ÑÐµÐ¼ MakeCode Ð½Ð° NewMakeCode
+                    curr->MakeCode = devExt->RemapConfig.Remaps[i].NewMakeCode;
+
+                    DebugPrint(("KBFILTR: Key Remap: 0x%x -> 0x%x\n", originalCode, curr->MakeCode));
+                    break;
+                }
+            }
+
+            WdfSpinLockRelease(devExt->ConfigLock);
+        }
+
+        // Ð•ÑÐ»Ð¸ ÑÑ‚Ð¾ Break Code, Ð²Ñ‹Ñ‡Ð¸ÑÐ»ÑÐµÐ¼ Make Code Ð´Ð»Ñ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐºÐ¸
         if (curr->Flags & KEY_BREAK) {
-            targetMakeCode = curr->MakeCode & 0x7F; // Èëè curr->MakeCode - 0x80
+            targetMakeCode = curr->MakeCode & 0x7F; // Ð˜Ð»Ð¸ curr->MakeCode - 0x80
         }
 
-        // 1. ÑÒÀÒÈ×ÅÑÊÀß ÏÐÎÂÅÐÊÀ: ÁËÎÊÈÐÎÂÊÀ 'X' (Make Code 0x2D)
-        // Ïðîâåðÿåì targetMakeCode, ÷òîáû çàáëîêèðîâàòü è 0x2D, è 0xAD.
-        if (targetMakeCode == 0x2D) {
-            shouldBlock = TRUE;
-            // Ïðè îòëàäêå ïîêàçûâàåì è Make, è Break code
-            DebugPrint(("KBFILTR: STATICALLY BLOCKED X (Make/Break Code: 0x%x).\n", curr->MakeCode));
-        }
 
-        // 2. ÄÈÍÀÌÈ×ÅÑÊÀß ÏÐÎÂÅÐÊÀ (IOCTL ñïèñîê)
+
+        // 2. Ð”Ð˜ÐÐÐœÐ˜Ð§Ð•Ð¡ÐšÐÐ¯ ÐŸÐ ÐžÐ’Ð•Ð ÐšÐ (IOCTL ÑÐ¿Ð¸ÑÐ¾Ðº)
         if (!shouldBlock) {
 
             WdfSpinLockAcquire(devExt->ConfigLock);
 
             for (i = 0; i < devExt->BlockedKeys.Count; i++) {
-                // Ñðàâíèâàåì âû÷èñëåííûé targetMakeCode ñ íàøèì ñïèñêîì
+                // Ð¡Ñ€Ð°Ð²Ð½Ð¸Ð²Ð°ÐµÐ¼ Ð²Ñ‹Ñ‡Ð¸ÑÐ»ÐµÐ½Ð½Ñ‹Ð¹ targetMakeCode Ñ Ð½Ð°ÑˆÐ¸Ð¼ ÑÐ¿Ð¸ÑÐºÐ¾Ð¼
                 if (targetMakeCode == devExt->BlockedKeys.Keys[i]) {
+                   
                     shouldBlock = TRUE;
                     break;
                 }
@@ -556,7 +595,7 @@ VOID KbFilter_ServiceCallback(
         // -----------------------------------------------------
 
         if (shouldBlock) {
-            // Êëþ÷ ñúåäàåòñÿ.
+            // ÐšÐ»ÑŽÑ‡ ÑÑŠÐµÐ´Ð°ÐµÑ‚ÑÑ.
             consumed++;
 
             if (targetMakeCode != 0x2D) {
@@ -565,7 +604,7 @@ VOID KbFilter_ServiceCallback(
             continue;
         }
 
-        // Åñëè íå çàáëîêèðîâàíî — îòïðàâëÿåì äàëüøå â ñèñòåìó
+        // Ð•ÑÐ»Ð¸ Ð½Ðµ Ð·Ð°Ð±Ð»Ð¾ÐºÐ¸Ñ€Ð¾Ð²Ð°Ð½Ð¾ â€” Ð¾Ñ‚Ð¿Ñ€Ð°Ð²Ð»ÑÐµÐ¼ Ð´Ð°Ð»ÑŒÑˆÐµ Ð² ÑÐ¸ÑÑ‚ÐµÐ¼Ñƒ
         classService(
             devExt->UpperConnectData.ClassDeviceObject,
             curr,

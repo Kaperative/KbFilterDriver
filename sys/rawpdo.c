@@ -35,13 +35,53 @@ KbFilter_EvtIoDeviceControlForRawPdo(
     UNREFERENCED_PARAMETER(OutputBufferLength);
     UNREFERENCED_PARAMETER(InputBufferLength);
 
-    DebugPrint(("Entered KbFilter_EvtIoDeviceControlForRawPdo\n"));
+    DebugPrint(("Entered KbFilter_EvtIoDeviceControlForRawPdo\n",0));
 
 
     switch (IoControlCode) {
+    case IOCTL_KBFILTR_SET_REMAPPED_KEYS:
+    {
+        NTSTATUS remapStatus = STATUS_SUCCESS;
+        PKEY_REMAP_CONFIG newRemapConfig = NULL;
+
+        // 1. ПРОВЕРКА РАЗМЕРА
+        if (InputBufferLength < sizeof(KEY_REMAP_CONFIG)) {
+            remapStatus = STATUS_BUFFER_TOO_SMALL;
+            DebugPrint(("KBFILTR IOCTL: ERROR: Remap buffer too small! Status 0x%x\n", remapStatus));
+            break;
+        }
+
+        // 2. ПОЛУЧЕНИЕ БУФЕРА
+        remapStatus = WdfRequestRetrieveInputBuffer(Request, sizeof(KEY_REMAP_CONFIG), (PVOID*)&newRemapConfig, NULL);
+        if (!NT_SUCCESS(remapStatus)) {
+            DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer for remap failed! Status 0x%x\n", remapStatus));
+            break;
+        }
+
+        // 3. ВАЛИДАЦИЯ COUNT
+        if (newRemapConfig->Count > MAX_REMAPPED_KEYS) {
+            remapStatus = STATUS_INVALID_PARAMETER;
+            DebugPrint(("KBFILTR IOCTL: ERROR: Invalid parameter (Remap Count too high)! Status 0x%x\n", remapStatus));
+            break;
+        }
+
+        // 4. КОПИРОВАНИЕ ДАННЫХ В КОНТЕКСТ ДРАЙВЕРА С БЛОКИРОВКОЙ
+        WdfSpinLockAcquire(devExt->ConfigLock);
+        RtlCopyMemory(&devExt->RemapConfig, newRemapConfig, sizeof(KEY_REMAP_CONFIG));
+
+        devExt->RemappingEnabled = (newRemapConfig->Count > 0);
+
+        WdfSpinLockRelease(devExt->ConfigLock);
+
+        DebugPrint(("KBFILTR IOCTL: Successfully updated remap keys. Final Count: %lu\n", devExt->RemapConfig.Count));
+
+        status = remapStatus; // Используем общую переменную status
+        bytesTransferred = 0;
+    }
+    break;
     case IOCTL_KBFILTR_SET_BLOCKED_KEYS:
     {
-        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 2: Inside Case **\n"));
+        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 2: Inside Case **\n", 0));
         PBLOCKED_KEYS_CONFIG newConfig = NULL;
 
 
@@ -74,6 +114,33 @@ KbFilter_EvtIoDeviceControlForRawPdo(
         // 4. КОПИРОВАНИЕ ДАННЫХ В КОНТЕКСТ ДРАЙВЕРА С БЛОКИРОВКОЙ
         WdfSpinLockAcquire(devExt->ConfigLock);
         RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
+        if (newConfig->OperationFlag == 0) {
+            // Флаг = 0: ОТКЛЮЧИТЬ блокировку
+            devExt->BlockingEnabled = FALSE;
+            DebugPrint(("KBFILTR IOCTL: Blocking DISABLED by client command.\n",0));
+
+        }
+        else if (newConfig->OperationFlag == 1) {
+            // Флаг = 1: ВКЛЮЧИТЬ блокировку И сохранить новые ключи
+
+            // Если клиент передал список ключей, сохраняем его
+            if (newConfig->Count > 0) {
+                RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
+                DebugPrint(("KBFILTR IOCTL: Successfully updated keys and Enabled blocking.\n", 0));
+            }
+            else {
+                DebugPrint(("KBFILTR IOCTL: Enabled blocking. Key list unchanged.\n", 0));
+            }
+            devExt->BlockingEnabled = TRUE;
+
+        }
+        else {
+            // Неизвестный OperationFlag
+            status = STATUS_INVALID_PARAMETER;
+            DebugPrint(("KBFILTR IOCTL: ERROR: Invalid OperationFlag (%lu).\n", newConfig->OperationFlag));
+        }
+
+        // --- КОНЕЦ АЛГОРИТМА ---
         WdfSpinLockRelease(devExt->ConfigLock);
 
         // 5. ПОДТВЕРЖДЕНИЕ ВЫВОДОМ
