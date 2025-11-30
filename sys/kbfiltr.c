@@ -179,6 +179,13 @@ KbFilter_EvtIoDeviceControlFromRawPdo(
 
         WdfSpinLockRelease(devExt->ConfigLock);
 
+        // --- ÄÈÀÃÍÎÑÒÈ×ÅÑÊÈÉ ÂÛÂÎÄ ---
+        DebugPrint(("KBFILTR IOCTL: Successfully updated keys. Count: %lu\n", devExt->BlockedKeys.Count));
+        for (ULONG i = 0; i < (devExt->BlockedKeys.Count); i++) {
+            DebugPrint(("KBFILTR IOCTL: Key[%lu] set to 0x%x\n", i, devExt->BlockedKeys.Keys[i]));
+        }
+        // ------------------------------
+
         bytesTransferred = 0;
     }
     break;
