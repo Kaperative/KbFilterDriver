@@ -1,17 +1,22 @@
 ﻿  Building 'kbfiltr' with toolset 'WindowsKernelModeDriver10.0' and the 'Windows Driver' target platform.
   Stamping x64\Debug\kbfiltr.inf
-  Stamping [Version] section with DriverVer=12/01/2025,2.3.40.930
+  Stamping [Version] section with DriverVer=12/02/2025,15.33.16.460
   kbfiltr.vcxproj -> C:\Users\user\Desktop\Новая папка\KbFilterDriver\sys\x64\Debug\kbfiltr.sys
   Done Adding Additional Store
   Successfully signed: C:\Users\user\Desktop\ \KbFilterDriver\sys\x64\Debug\kbfiltr.sys
   
   Driver is 'Windows Driver'.
   ........................
-  Signability test failed.
+  Signability test complete.
   
   Errors:
-  22.9.7: DriverVer set to a date in the future (postdated DriverVer not allowed) in kbfiltr\kbfiltr.inf.
+  None
   
   Warnings:
   None
-x64\Debug\inf2catOutput.log : Inf2Cat error -2: "Inf2Cat, signability test failed." Double click to see the tool output.
+  
+  Catalog generation complete.
+  C:\Users\user\Desktop\Новая папка\KbFilterDriver\sys\x64\Debug\kbfiltr\kmdfsamples.cat
+  Done Adding Additional Store
+  Successfully signed: x64\Debug\kbfiltr\kmdfsamples.cat
+  
