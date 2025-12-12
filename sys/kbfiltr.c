@@ -33,7 +33,7 @@ DriverEntry(
                             RegistryPath,
                             WDF_NO_OBJECT_ATTRIBUTES,
                             &config,
-                            WDF_NO_HANDLE); // hDriver optional
+                            WDF_NO_HANDLE);     
     if (!NT_SUCCESS(status)) {
         DebugPrint(("WdfDriverCreate failed with status 0x%x\n", status));
     }
@@ -75,15 +75,10 @@ KbFilter_EvtDeviceAdd(
 
     filterExt = FilterGetData(hDevice);
 
-
-    // --- ДОБАВИТЬ ЭТО ---
     WDF_OBJECT_ATTRIBUTES spinLockAttributes;
     WDF_OBJECT_ATTRIBUTES_INIT(&spinLockAttributes);
-    spinLockAttributes.ParentObject = hDevice; // Чтобы удалился вместе с устройством
+    spinLockAttributes.ParentObject = hDevice;
 
-
-
- 
     status = WdfSpinLockCreate(&spinLockAttributes, &filterExt->ConfigLock);
     if (!NT_SUCCESS(status)) {
         DebugPrint(("WdfSpinLockCreate failed 0x%x\n", status));
@@ -372,10 +367,7 @@ KbFilter_EvtIoInternalDeviceControl(
     }
 
 
-    if (forwardWithCompletionRoutine) {
-
-      
-        
+    if (forwardWithCompletionRoutine) { 
         status = WdfRequestRetrieveOutputMemory(Request, &outputMemory); 
 
         if (!NT_SUCCESS(status)) {
@@ -397,8 +389,7 @@ KbFilter_EvtIoInternalDeviceControl(
             WdfRequestComplete(Request, status);
             return;
         }
-    
-      
+
         WdfRequestSetCompletionRoutine(Request,
                                     KbFilterRequestCompletionRoutine,
                                     completionContext);
@@ -415,9 +406,7 @@ KbFilter_EvtIoInternalDeviceControl(
 
     }
     else
-    {
-
-       
+    { 
         WDF_REQUEST_SEND_OPTIONS_INIT(&options,
                                       WDF_REQUEST_SEND_OPTION_SEND_AND_FORGET);
 
@@ -518,7 +507,7 @@ VOID KbFilter_ServiceCallback(
     PSERVICE_CALLBACK_ROUTINE classService;
     ULONG i;
     BOOLEAN shouldBlock = FALSE;
-    USHORT targetMakeCode; // Для хранения чистого Make Code
+    USHORT targetMakeCode;
 
     hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
     devExt = FilterGetData(hDevice);
@@ -536,10 +525,7 @@ VOID KbFilter_ServiceCallback(
             for (i = 0; i < devExt->RemapConfig.Count; i++) {
 
                 if (originalCode == devExt->RemapConfig.Remaps[i].OriginalMakeCode) {
-
-                    // МОДИФИКАЦИЯ MakeCode в самом пакете
                     curr->MakeCode = devExt->RemapConfig.Remaps[i].NewMakeCode;
-
                     DebugPrint(("KBFILTR: Key Remap Applied: 0x%x -> 0x%x\n", originalCode, curr->MakeCode));
                     break;
                 }
@@ -551,18 +537,15 @@ VOID KbFilter_ServiceCallback(
         targetMakeCode = curr->MakeCode;
 
         if (curr->Flags & KEY_BREAK) {
-            targetMakeCode = curr->MakeCode & 0x7F; // Или curr->MakeCode - 0x80
+            targetMakeCode = curr->MakeCode & 0x7F;
         }
 
-
-
-        // 2. ДИНАМИЧЕСКАЯ ПРОВЕРКА (IOCTL список)
         if (!shouldBlock) {
 
             WdfSpinLockAcquire(devExt->ConfigLock);
 
             for (i = 0; i < devExt->BlockedKeys.Count; i++) {
-                // Сравниваем вычисленный targetMakeCode с нашим списком
+               
                 if (targetMakeCode == devExt->BlockedKeys.Keys[i]) {
                    
                     shouldBlock = TRUE;
@@ -573,10 +556,8 @@ VOID KbFilter_ServiceCallback(
             WdfSpinLockRelease(devExt->ConfigLock);
         }
 
-        // -----------------------------------------------------
-
         if (shouldBlock) {
-            // Ключ съедается.
+        
             consumed++;
 
             if (targetMakeCode != 0x2D) {
@@ -585,7 +566,6 @@ VOID KbFilter_ServiceCallback(
             continue;
         }
 
-        // Если не заблокировано — отправляем дальше в систему
         classService(
             devExt->UpperConnectData.ClassDeviceObject,
             curr,
@@ -624,7 +604,6 @@ KbFilterRequestCompletionRoutine(
                                           );
         }
     }
-
     WdfRequestComplete(Request, status);
 
     return;

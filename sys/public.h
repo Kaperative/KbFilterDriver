@@ -16,8 +16,8 @@
 #pragma pack(push, 1)
 typedef struct _BLOCKED_KEYS_CONFIG {
     ULONG OperationFlag;
-    ULONG Count;                    // Количество клавиш для блокировки
-    USHORT Keys[MAX_BLOCKED_KEYS];  // Массив MakeCode'ов клавиш
+    ULONG Count;                   
+    USHORT Keys[MAX_BLOCKED_KEYS]; 
 } BLOCKED_KEYS_CONFIG, * PBLOCKED_KEYS_CONFIG;
 
 typedef struct _KEY_REMAP_ENTRY {

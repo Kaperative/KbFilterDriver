@@ -60,11 +60,10 @@ typedef struct _DEVICE_EXTENSION
     IN PVOID CallContext;
 
     KEYBOARD_ATTRIBUTES KeyboardAttributes;
-    // --- НОВЫЕ ПОЛЯ ---
-    BLOCKED_KEYS_CONFIG BlockedKeys; // Хранилище блокируемых клавиш
-    WDFSPINLOCK ConfigLock;          // Защита доступа к данным
+
+    BLOCKED_KEYS_CONFIG BlockedKeys; 
+    WDFSPINLOCK ConfigLock;
     BOOLEAN BlockingEnabled;
-    // ------------------
     BOOLEAN RemappingEnabled;
     KEY_REMAP_CONFIG RemapConfig;
 } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
@@ -136,7 +135,6 @@ typedef struct _RPDO_DEVICE_DATA
 {
 
     ULONG InstanceNo;
-
     //
     // Queue of the parent device we will forward requests to
     //

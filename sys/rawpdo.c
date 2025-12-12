@@ -16,21 +16,15 @@ KbFilter_EvtIoDeviceControlForRawPdo(
 
 {
     NTSTATUS status = STATUS_SUCCESS;
-    // WDFDEVICE parent - это Raw PDO, которое получило запрос.
     WDFDEVICE hChild = WdfIoQueueGetDevice(Queue);
     PRPDO_DEVICE_DATA pdoData = PdoGetData(hChild);
-    // Получаем FDO (родительский фильтр), который хранит DEVICE_EXTENSION.
+
     WDFDEVICE hFDO = WdfIoQueueGetDevice(pdoData->ParentQueue);
 
-    // Получаем контексты устройств
-
-    PDEVICE_EXTENSION devExt = FilterGetData(hFDO); // <-- КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Инициализация devExt
+    PDEVICE_EXTENSION devExt = FilterGetData(hFDO); 
 
     WDF_REQUEST_FORWARD_OPTIONS forwardOptions;
     size_t bytesTransferred = 0;
-
-    // Дублирование объявления 'status' удалено.
-    // Исходный 'parent' переименован в 'hChild' для ясности.
 
     UNREFERENCED_PARAMETER(OutputBufferLength);
     UNREFERENCED_PARAMETER(InputBufferLength);
@@ -44,28 +38,12 @@ KbFilter_EvtIoDeviceControlForRawPdo(
         NTSTATUS remapStatus = STATUS_SUCCESS;
         PKEY_REMAP_CONFIG newRemapConfig = NULL;
 
-        // 1. ПРОВЕРКА РАЗМЕРА
-        if (InputBufferLength < sizeof(KEY_REMAP_CONFIG)) {
-            remapStatus = STATUS_BUFFER_TOO_SMALL;
-            DebugPrint(("KBFILTR IOCTL: ERROR: Remap buffer too small! Status 0x%x\n", remapStatus));
-            break;
-        }
-
-        // 2. ПОЛУЧЕНИЕ БУФЕРА
         remapStatus = WdfRequestRetrieveInputBuffer(Request, sizeof(KEY_REMAP_CONFIG), (PVOID*)&newRemapConfig, NULL);
         if (!NT_SUCCESS(remapStatus)) {
             DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer for remap failed! Status 0x%x\n", remapStatus));
             break;
         }
 
-        // 3. ВАЛИДАЦИЯ COUNT
-        if (newRemapConfig->Count > MAX_REMAPPED_KEYS) {
-            remapStatus = STATUS_INVALID_PARAMETER;
-            DebugPrint(("KBFILTR IOCTL: ERROR: Invalid parameter (Remap Count too high)! Status 0x%x\n", remapStatus));
-            break;
-        }
-
-        // 4. КОПИРОВАНИЕ ДАННЫХ В КОНТЕКСТ ДРАЙВЕРА С БЛОКИРОВКОЙ
         WdfSpinLockAcquire(devExt->ConfigLock);
         RtlCopyMemory(&devExt->RemapConfig, newRemapConfig, sizeof(KEY_REMAP_CONFIG));
 
@@ -75,7 +53,7 @@ KbFilter_EvtIoDeviceControlForRawPdo(
 
         DebugPrint(("KBFILTR IOCTL: Successfully updated remap keys. Final Count: %lu\n", devExt->RemapConfig.Count));
 
-        status = remapStatus; // Используем общую переменную status
+        status = remapStatus; 
         bytesTransferred = 0;
     }
     break;
@@ -84,83 +62,32 @@ KbFilter_EvtIoDeviceControlForRawPdo(
         DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 2: Inside Case **\n", 0));
         PBLOCKED_KEYS_CONFIG newConfig = NULL;
 
-
-        // 1. ПРОВЕРКА РАЗМЕРА
-        DebugPrint(("KBFILTR IOCTL: InputBufferLength: %zu, Expected size: %zu\n", InputBufferLength, sizeof(BLOCKED_KEYS_CONFIG)));
-        if (InputBufferLength < sizeof(BLOCKED_KEYS_CONFIG)) {
-            status = STATUS_BUFFER_TOO_SMALL;
-            DebugPrint(("KBFILTR IOCTL: ERROR: Buffer too small! Status 0x%x\n", status));
-            break;
-        }
-
-        // 2. ПОЛУЧЕНИЕ БУФЕРА
         status = WdfRequestRetrieveInputBuffer(Request, sizeof(BLOCKED_KEYS_CONFIG), (PVOID*)&newConfig, NULL);
         if (!NT_SUCCESS(status)) {
             DebugPrint(("KBFILTR IOCTL: ERROR: RetrieveInputBuffer failed! Status 0x%x\n", status));
             break;
         }
 
-        // 3. ДИАГНОСТИКА И ВАЛИДАЦИЯ COUNT
-        DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 3: Got Buffer. Count: %lu **\n", newConfig->Count));
-        DebugPrint(("KBFILTR IOCTL: [DEBUG-ALIGN] Received raw Count value: %lu\n", newConfig->Count));
-
-        DebugPrint(("KBFILTR IOCTL: Received Count: %lu, Max Allowed: %d\n", newConfig->Count, MAX_BLOCKED_KEYS));
-        if (newConfig->Count > MAX_BLOCKED_KEYS) {
-            status = STATUS_INVALID_PARAMETER;
-            DebugPrint(("KBFILTR IOCTL: ERROR: Invalid parameter (Count too high)! Status 0x%x\n", status));
-            break;
-        }
-
-        // 4. КОПИРОВАНИЕ ДАННЫХ В КОНТЕКСТ ДРАЙВЕРА С БЛОКИРОВКОЙ
         WdfSpinLockAcquire(devExt->ConfigLock);
         RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
         if (newConfig->OperationFlag == 0) {
-            // Флаг = 0: ОТКЛЮЧИТЬ блокировку
             devExt->BlockingEnabled = FALSE;
             DebugPrint(("KBFILTR IOCTL: Blocking DISABLED by client command.\n",0));
 
         }
-        else if (newConfig->OperationFlag == 1) {
-            // Флаг = 1: ВКЛЮЧИТЬ блокировку И сохранить новые ключи
-
-            // Если клиент передал список ключей, сохраняем его
-            if (newConfig->Count > 0) {
-                RtlCopyMemory(&devExt->BlockedKeys, newConfig, sizeof(BLOCKED_KEYS_CONFIG));
-                DebugPrint(("KBFILTR IOCTL: Successfully updated keys and Enabled blocking.\n", 0));
-            }
-            else {
-                DebugPrint(("KBFILTR IOCTL: Enabled blocking. Key list unchanged.\n", 0));
-            }
-            devExt->BlockingEnabled = TRUE;
-
-        }
-        else {
-            // Неизвестный OperationFlag
-            status = STATUS_INVALID_PARAMETER;
-            DebugPrint(("KBFILTR IOCTL: ERROR: Invalid OperationFlag (%lu).\n", newConfig->OperationFlag));
-        }
-
-        // --- КОНЕЦ АЛГОРИТМА ---
+      
         WdfSpinLockRelease(devExt->ConfigLock);
-
-        // 5. ПОДТВЕРЖДЕНИЕ ВЫВОДОМ
-        DebugPrint(("KBFILTR IOCTL: Successfully updated keys. Final Count: %lu\n", devExt->BlockedKeys.Count));
-        for (ULONG i = 0; i < devExt->BlockedKeys.Count; i++) {
-            DebugPrint(("KBFILTR IOCTL: Key[%lu] set to 0x%x\n", i, devExt->BlockedKeys.Keys[i]));
-        }
-
         bytesTransferred = 0;
     }
     break;
 
     case IOCTL_KBFILTR_GET_KEYBOARD_ATTRIBUTES:
-        // Перенаправляем запрос Query Attributes родительскому фильтру, который знает атрибуты.
         WDF_REQUEST_FORWARD_OPTIONS_INIT(&forwardOptions);
         status = WdfRequestForwardToParentDeviceIoQueue(Request, pdoData->ParentQueue, &forwardOptions);
         if (!NT_SUCCESS(status)) {
             WdfRequestComplete(Request, status);
         }
-        // Возвращаемся, так как запрос был перенаправлен, и будет завершен в другом месте.
+
         return;
 
     default:
@@ -171,7 +98,7 @@ KbFilter_EvtIoDeviceControlForRawPdo(
 
     DebugPrint(("KBFILTR IOCTL: ** DEBUG POINT 4: Completing request with status 0x%x **\n", status));
 
-    // Завершаем запрос, если он не был перенаправлен (в случае IOCTL_KBFILTR_SET_BLOCKED_KEYS)
+    // Завершение запроса, если он не был перенаправлен (в случае IOCTL_KBFILTR_SET_BLOCKED_KEYS)
     WdfRequestCompleteWithInformation(Request, status, bytesTransferred);
 
     return;
@@ -316,7 +243,6 @@ KbFiltr_CreateRawPdo(
         goto Cleanup;
     }
 
- 
     status = WdfFdoAddStaticChild(Device, hChild);
     if (!NT_SUCCESS(status)) {
         goto Cleanup;
